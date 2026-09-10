@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name "parity-spotcheck">
 <!ENTITY author "Ray Munro">
-<!ENTITY version "2026.09.10">
+<!ENTITY version "2026.09.10b">
 <!ENTITY plgdir "/usr/local/emhttp/plugins/&name;">
 <!ENTITY cfgdir "/boot/config/plugins/&name;">
 <!ENTITY launch "Settings/ParitySpotCheck">
@@ -15,6 +15,13 @@
         project="https://github.com/&github;"
         readme="https://github.com/&github;#readme">
 <CHANGES>
+### 2026.09.10b
+- Settings page now polls a new status.php JSON endpoint every 3 seconds and updates status, counters and recent-history table in place, without a full page reload.
+
+### 2026.09.10a
+- Fixed disks.ini parsing: section headers are written as ["name"], not [name], so the parity-status check always read "none" and refused to run. Confirmed against a live disks.ini.
+- Now reads disks.ini's exact `sectors` field for the parity device (512-byte units, matching mdcmd's offset unit) instead of deriving it from `size` in KB, removing a small rounding error.
+
 ### 2026.09.10
 - Initial release.
 </CHANGES>
@@ -126,15 +133,16 @@ if (is_file($historyFile)) {
 <?php if ($err): ?><div class="error"><?=q($err)?></div><?php endif; ?>
 
 <div class="psc-card">
-  <div class="psc-status">Current status: <span style="color:<?=q($statusClass)?>"><?=q($status)?></span></div>
-  <div><?=q($detail)?></div>
-  <div class="psc-note">Last updated: <?=q($updated)?></div>
+  <div class="psc-status">Current status: <span id="psc-status-text" style="color:<?=q($statusClass)?>"><?=q($status)?></span></div>
+  <div id="psc-detail"><?=q($detail)?></div>
+  <div class="psc-note" id="psc-updated">Last updated: <?=q($updated)?></div>
   <div class="psc-kv">
-    <b>Spot checks run</b><span><?=q($state['TOTAL_SPOTS'] ?? '0')?> since last (re)start</span>
-    <b>Data scanned</b><span><?=q($state['TOTAL_MB'] ?? '0')?> MB since last (re)start</span>
-    <b>Mismatches found</b><span style="<?=(($state['TOTAL_ERRORS'] ?? '0') !== '0') ? 'color:red;font-weight:700' : ''?>"><?=q($state['TOTAL_ERRORS'] ?? '0')?></span>
-    <b>Last spot offset</b><span><?=q($state['LAST_OFFSET_DESC'] ?? 'None yet')?></span>
+    <b>Spot checks run</b><span id="psc-total-spots"><?=q($state['TOTAL_SPOTS'] ?? '0')?> since last (re)start</span>
+    <b>Data scanned</b><span id="psc-total-mb"><?=q($state['TOTAL_MB'] ?? '0')?> MB since last (re)start</span>
+    <b>Mismatches found</b><span id="psc-total-errors" style="<?=(($state['TOTAL_ERRORS'] ?? '0') !== '0') ? 'color:red;font-weight:700' : ''?>"><?=q($state['TOTAL_ERRORS'] ?? '0')?></span>
+    <b>Last spot offset</b><span id="psc-last-offset"><?=q($state['LAST_OFFSET_DESC'] ?? 'None yet')?></span>
   </div>
+  <div class="psc-note" id="psc-live-indicator" style="font-size:11px">&#9679; live</div>
 </div>
 
 <form method="post">
@@ -163,12 +171,12 @@ if (is_file($historyFile)) {
 
 <div class="psc-card">
   <b>Recent spot checks</b>
-  <?php if (empty($history)): ?>
-  <div class="psc-note">No spot checks recorded yet since the last start/reboot.</div>
-  <?php else: ?>
   <table class="psc-table">
-    <tr><th>Time</th><th>Array offset</th><th>Size</th><th>Mismatches</th><th>Duration</th><th>Note</th></tr>
-    <?php foreach ($history as $h): ?>
+    <thead><tr><th>Time</th><th>Array offset</th><th>Size</th><th>Mismatches</th><th>Duration</th><th>Note</th></tr></thead>
+    <tbody id="psc-history-body">
+    <?php if (empty($history)): ?>
+    <tr><td colspan="6" class="psc-note">No spot checks recorded yet since the last start/reboot.</td></tr>
+    <?php else: foreach ($history as $h): ?>
     <tr>
       <td><?=q($h['time'])?></td>
       <td><?=q($h['offset'])?></td>
@@ -177,9 +185,9 @@ if (is_file($historyFile)) {
       <td><?=q($h['duration_s'])?>s</td>
       <td><?=q($h['note'])?></td>
     </tr>
-    <?php endforeach; ?>
+    <?php endforeach; endif; ?>
+    </tbody>
   </table>
-  <?php endif; ?>
 </div>
 
 <div class="psc-card">
@@ -192,6 +200,104 @@ if (is_file($historyFile)) {
 </div>
 
 <div class="psc-copyright">Copyright &copy; Raymond Munro 2026. All rights reserved.</div>
+
+<script>
+(function() {
+  function pscColorForStatus(s) {
+    if (s === 'RUNNING') return 'green';
+    if (s === 'ERROR') return 'red';
+    if (s === 'WAITING') return '#d58512';
+    return '#888';
+  }
+  function pscEsc(s) {
+    var d = document.createElement('div');
+    d.textContent = (s === undefined || s === null) ? '' : String(s);
+    return d.innerHTML;
+  }
+  function pscRefresh() {
+    fetch('/plugins/parity-spotcheck/status.php', {cache: 'no-store'})
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var st = data.state || {};
+        var status = st.STATUS || 'UNKNOWN';
+        var statusEl = document.getElementById('psc-status-text');
+        if (statusEl) { statusEl.textContent = status; statusEl.style.color = pscColorForStatus(status); }
+        var el;
+        if ((el = document.getElementById('psc-detail'))) el.textContent = st.DETAIL || 'No status has been recorded yet.';
+        if ((el = document.getElementById('psc-updated'))) el.textContent = 'Last updated: ' + (st.UPDATED || 'Never');
+        if ((el = document.getElementById('psc-total-spots'))) el.textContent = (st.TOTAL_SPOTS || '0') + ' since last (re)start';
+        if ((el = document.getElementById('psc-total-mb'))) el.textContent = (st.TOTAL_MB || '0') + ' MB since last (re)start';
+        if ((el = document.getElementById('psc-total-errors'))) {
+          var errs = st.TOTAL_ERRORS || '0';
+          el.textContent = errs;
+          el.style.color = (errs !== '0') ? 'red' : '';
+          el.style.fontWeight = (errs !== '0') ? '700' : '';
+        }
+        if ((el = document.getElementById('psc-last-offset'))) el.textContent = st.LAST_OFFSET_DESC || 'None yet';
+
+        var tbody = document.getElementById('psc-history-body');
+        if (tbody) {
+          var rows = '';
+          (data.history || []).forEach(function(h) {
+            var errStyle = (h.errors !== '0') ? ' style="color:red;font-weight:700"' : '';
+            rows += '<tr><td>' + pscEsc(h.time) + '</td><td>' + pscEsc(h.offset) + '</td><td>' + pscEsc(h.size_mb) + ' MB</td>'
+                  + '<td' + errStyle + '>' + pscEsc(h.errors) + '</td><td>' + pscEsc(h.duration_s) + 's</td><td>' + pscEsc(h.note) + '</td></tr>';
+          });
+          tbody.innerHTML = rows || '<tr><td colspan="6" class="psc-note">No spot checks recorded yet since the last start/reboot.</td></tr>';
+        }
+        var ind = document.getElementById('psc-live-indicator');
+        if (ind) { ind.style.color = '#2a2'; ind.title = 'Updated ' + new Date().toLocaleTimeString(); }
+      })
+      .catch(function() {
+        var ind = document.getElementById('psc-live-indicator');
+        if (ind) ind.style.color = '#c33';
+      });
+  }
+  pscRefresh();
+  setInterval(pscRefresh, 3000);
+})();
+</script>
+]]></INLINE>
+</FILE>
+<FILE Name="/usr/local/emhttp/plugins/parity-spotcheck/status.php">
+<INLINE><![CDATA[
+<?php
+header('Content-Type: application/json');
+$name = 'parity-spotcheck';
+$stateFile = "/var/local/$name/state";
+$historyFile = "/var/local/$name/history";
+
+function load_kv($path) {
+    $out = [];
+    if (!is_file($path)) return $out;
+    foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+        if (strpos($line, '=') === false) continue;
+        [$k, $v] = explode('=', $line, 2);
+        $v = trim($v);
+        if (strlen($v) >= 2 && $v[0] === '"' && substr($v, -1) === '"') {
+            $v = stripcslashes(substr($v, 1, -1));
+        }
+        $out[trim($k)] = $v;
+    }
+    return $out;
+}
+
+$state = load_kv($stateFile);
+$history = [];
+if (is_file($historyFile)) {
+    $lines = file($historyFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+    $lines = array_slice($lines, -50);
+    foreach (array_reverse($lines) as $line) {
+        $parts = explode('|', $line);
+        if (count($parts) < 6) continue;
+        $history[] = [
+            'time' => $parts[0], 'offset' => $parts[1], 'size_mb' => $parts[2],
+            'errors' => $parts[3], 'duration_s' => $parts[4], 'note' => $parts[5],
+        ];
+    }
+}
+
+echo json_encode(['state' => $state, 'history' => $history]);
 ]]></INLINE>
 </FILE>
 <FILE Name="/usr/local/emhttp/plugins/parity-spotcheck/scripts/parity-spotcheck.sh">
@@ -503,7 +609,7 @@ CFGDIR="/boot/config/plugins/$NAME"
 CFG="$CFGDIR/$NAME.cfg"
 mkdir -p "$PLGDIR/scripts" "$CFGDIR" "/var/local/$NAME"
 chmod 0755 "$PLGDIR/scripts/parity-spotcheck.sh" "$PLGDIR/scripts/rc.parity-spotcheck"
-chmod 0644 "$PLGDIR/ParitySpotCheck.page"
+chmod 0644 "$PLGDIR/ParitySpotCheck.page" "$PLGDIR/status.php"
 if [[ ! -f "$CFG" ]]; then
 cat > "$CFG" <<'CFGEOF'
 ENABLED="no"
@@ -516,7 +622,7 @@ fi
 "$PLGDIR/scripts/rc.$NAME" start >/dev/null 2>&1 || true
 echo "-----------------------------------------------------------"
 echo " Parity Spot Check installed"
-echo " Version: 2026.09.10"
+echo " Version: 2026.09.10b"
 echo " Mode: always NOCORRECT (read-only, never writes parity)"
 echo " Default: disabled; enable it under Settings -> User Utilities"
 echo " Settings: Settings -> User Utilities -> Parity Spot Check"
