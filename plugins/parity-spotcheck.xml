@@ -1,0 +1,17 @@
+<Plugin>
+  <!-- Required fields -->
+  <Name>Parity Spot Check</Name>
+  <Overview>Continuously spot-checks your array's parity in the background: picks a random sector offset, runs Unraid's own parity-check engine (mdcmd check nocorrect) over just that stretch, pauses, and repeats with a new random offset, indefinitely, until you turn it off. Always read-only (NOCORRECT) — it never writes to parity, and steps aside automatically if a real parity check or disk rebuild is already running.</Overview>
+  <!-- NOTE: PluginURL must match exactly the URL of the pluginURL attribute in the .plg file -->
+  <PluginURL>https://raw.githubusercontent.com/RayMunro/unraid-parity-spotcheck/main/parity-spotcheck.plg</PluginURL>
+  <PluginAuthor>Ray Munro</PluginAuthor>
+
+  <!-- Optional entries -->
+  <!-- The .plg file already sets the support attribute, so <Support> here is ignored, left out to avoid duplication -->
+  <Project>https://github.com/RayMunro/unraid-parity-spotcheck</Project>
+  <ReadMe>https://raw.githubusercontent.com/RayMunro/unraid-parity-spotcheck/main/README.md</ReadMe>
+  <Category>Tools:</Category>
+  <MinVer>6.12.0</MinVer>
+  <IconFA>crosshairs</IconFA>
+  <License>GPL-3.0-or-later</License>
+</Plugin>
