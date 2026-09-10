@@ -1,0 +1,524 @@
+<?xml version='1.0' standalone='yes'?>
+<!DOCTYPE PLUGIN [
+<!ENTITY name "parity-spotcheck">
+<!ENTITY author "Ray Munro">
+<!ENTITY version "2026.09.10">
+<!ENTITY plgdir "/usr/local/emhttp/plugins/&name;">
+<!ENTITY cfgdir "/boot/config/plugins/&name;">
+<!ENTITY launch "Settings/ParitySpotCheck">
+<!ENTITY github "RayMunro/unraid-parity-spotcheck">
+<!ENTITY pluginURL "https://raw.githubusercontent.com/&github;/main/&name;.plg">
+]>
+<PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" min="6.12.0" icon="crosshairs"
+        pluginURL="&pluginURL;"
+        support="https://github.com/&github;/issues"
+        project="https://github.com/&github;"
+        readme="https://github.com/&github;#readme">
+<CHANGES>
+### 2026.09.10
+- Initial release.
+</CHANGES>
+<FILE Name="/usr/local/emhttp/plugins/parity-spotcheck/ParitySpotCheck.page">
+<INLINE><![CDATA[
+Menu="Utilities:91"
+Title="Parity Spot Check"
+Icon="crosshairs"
+Type="xmenu"
+---
+<?php
+$name = 'parity-spotcheck';
+$cfgDir = "/boot/config/plugins/$name";
+$cfgFile = "$cfgDir/$name.cfg";
+$stateFile = "/var/local/$name/state";
+$historyFile = "/var/local/$name/history";
+$rc = "/usr/local/emhttp/plugins/$name/scripts/rc.$name";
+
+function load_kv($path) {
+    $out = [];
+    if (!is_file($path)) return $out;
+    foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+        if (strpos($line, '=') === false) continue;
+        [$k, $v] = explode('=', $line, 2);
+        $v = trim($v);
+        if (strlen($v) >= 2 && $v[0] === '"' && substr($v, -1) === '"') {
+            $v = stripcslashes(substr($v, 1, -1));
+        }
+        $out[trim($k)] = $v;
+    }
+    return $out;
+}
+
+function q($s) { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
+function cfg_line($k, $v) { return $k . '="' . addcslashes((string)$v, "\\\"") . "\"\n"; }
+
+$msg = '';
+$err = '';
+$rawCfg = load_kv($cfgFile);
+$cfg = array_merge([
+    'ENABLED' => 'no',
+    'SPOT_SIZE_MB' => '1024',
+    'INTERVAL_SECONDS' => '300',
+], $rawCfg);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = $_POST['action'] ?? 'save';
+
+    if ($action === 'save') {
+        $enabled = (($_POST['enabled'] ?? 'no') === 'yes') ? 'yes' : 'no';
+        $spotSize = (int)($_POST['spot_size_mb'] ?? 1024);
+        $interval = (int)($_POST['interval_seconds'] ?? 300);
+
+        if ($spotSize < 16 || $spotSize > 1048576) {
+            $err = 'Spot size must be between 16 MB and 1,048,576 MB (1 TB).';
+        } elseif ($interval < 10 || $interval > 86400) {
+            $err = 'Interval between spot checks must be between 10 and 86400 seconds.';
+        } else {
+            if (!is_dir($cfgDir)) mkdir($cfgDir, 0755, true);
+            $body = '';
+            $body .= cfg_line('ENABLED', $enabled);
+            $body .= cfg_line('SPOT_SIZE_MB', $spotSize);
+            $body .= cfg_line('INTERVAL_SECONDS', $interval);
+            file_put_contents($cfgFile, $body, LOCK_EX);
+            @chmod($cfgFile, 0644);
+            exec(escapeshellcmd($rc) . ' restart >/dev/null 2>&1');
+            $msg = 'Settings saved and spot checker restarted.';
+            $cfg = array_merge($cfg, load_kv($cfgFile));
+        }
+    }
+}
+
+$state = load_kv($stateFile);
+$status = $state['STATUS'] ?? 'UNKNOWN';
+$detail = $state['DETAIL'] ?? 'No status has been recorded yet.';
+$updated = $state['UPDATED'] ?? 'Never';
+$statusClass = ($status === 'RUNNING') ? 'green' : (($status === 'ERROR') ? 'red' : (($status === 'WAITING') ? '#d58512' : '#888'));
+
+$history = [];
+if (is_file($historyFile)) {
+    $lines = file($historyFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+    $lines = array_slice($lines, -50);
+    foreach (array_reverse($lines) as $line) {
+        $parts = explode('|', $line);
+        if (count($parts) < 6) continue;
+        $history[] = [
+            'time' => $parts[0], 'offset' => $parts[1], 'size_mb' => $parts[2],
+            'errors' => $parts[3], 'duration_s' => $parts[4], 'note' => $parts[5],
+        ];
+    }
+}
+?>
+
+<style>
+.psc-card{max-width:960px;padding:18px 22px;border:1px solid #ccc;border-radius:8px;margin:12px 0 22px 0}
+.psc-status{font-size:22px;font-weight:600;margin-bottom:6px}
+.psc-grid{display:grid;grid-template-columns:270px minmax(240px,420px);gap:12px 18px;align-items:center}
+.psc-grid input[type=text],.psc-grid input[type=number],.psc-grid select{width:100%}
+.psc-actions{margin-top:20px;display:flex;gap:10px;flex-wrap:wrap}
+.psc-note{color:#777;margin-top:8px;line-height:1.45}
+.psc-kv{display:grid;grid-template-columns:200px 1fr;gap:7px 14px;margin-top:12px}
+.psc-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}
+.psc-table th,.psc-table td{text-align:left;padding:5px 10px;border-bottom:1px solid #eee}
+.psc-copyright{max-width:960px;margin:28px 0 10px;padding:14px 18px;border:2px solid #d65a00;border-radius:8px;text-align:center;font-size:18px;font-weight:700;letter-spacing:.2px}
+.psc-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600}
+</style>
+
+<?php if ($msg): ?><div class="notice"><?=q($msg)?></div><?php endif; ?>
+<?php if ($err): ?><div class="error"><?=q($err)?></div><?php endif; ?>
+
+<div class="psc-card">
+  <div class="psc-status">Current status: <span style="color:<?=q($statusClass)?>"><?=q($status)?></span></div>
+  <div><?=q($detail)?></div>
+  <div class="psc-note">Last updated: <?=q($updated)?></div>
+  <div class="psc-kv">
+    <b>Spot checks run</b><span><?=q($state['TOTAL_SPOTS'] ?? '0')?> since last (re)start</span>
+    <b>Data scanned</b><span><?=q($state['TOTAL_MB'] ?? '0')?> MB since last (re)start</span>
+    <b>Mismatches found</b><span style="<?=(($state['TOTAL_ERRORS'] ?? '0') !== '0') ? 'color:red;font-weight:700' : ''?>"><?=q($state['TOTAL_ERRORS'] ?? '0')?></span>
+    <b>Last spot offset</b><span><?=q($state['LAST_OFFSET_DESC'] ?? 'None yet')?></span>
+  </div>
+</div>
+
+<form method="post">
+<input type="hidden" name="csrf_token" value="<?=q($var['csrf_token'] ?? '')?>">
+<input type="hidden" name="action" value="save">
+<div class="psc-grid">
+  <label for="enabled">Enable continuous spot checking</label>
+  <select id="enabled" name="enabled">
+    <option value="yes" <?=($cfg['ENABLED'] ?? 'no') === 'yes' ? 'selected' : ''?>>Yes</option>
+    <option value="no" <?=($cfg['ENABLED'] ?? 'no') !== 'yes' ? 'selected' : ''?>>No</option>
+  </select>
+
+  <label for="spot_size_mb">Spot size (MB per check)</label>
+  <input id="spot_size_mb" name="spot_size_mb" type="number" min="16" max="1048576" value="<?=q($cfg['SPOT_SIZE_MB'] ?? '1024')?>">
+
+  <label for="interval_seconds">Rest between spot checks (seconds)</label>
+  <input id="interval_seconds" name="interval_seconds" type="number" min="10" max="86400" value="<?=q($cfg['INTERVAL_SECONDS'] ?? '300')?>">
+</div>
+
+<div class="psc-actions"><button type="submit">Apply</button></div>
+</form>
+
+<form method="post" style="margin-top:10px">
+  <button type="button" onclick="location.reload()">Refresh Status</button>
+</form>
+
+<div class="psc-card">
+  <b>Recent spot checks</b>
+  <?php if (empty($history)): ?>
+  <div class="psc-note">No spot checks recorded yet since the last start/reboot.</div>
+  <?php else: ?>
+  <table class="psc-table">
+    <tr><th>Time</th><th>Array offset</th><th>Size</th><th>Mismatches</th><th>Duration</th><th>Note</th></tr>
+    <?php foreach ($history as $h): ?>
+    <tr>
+      <td><?=q($h['time'])?></td>
+      <td><?=q($h['offset'])?></td>
+      <td><?=q($h['size_mb'])?> MB</td>
+      <td style="<?=($h['errors'] !== '0') ? 'color:red;font-weight:700' : ''?>"><?=q($h['errors'])?></td>
+      <td><?=q($h['duration_s'])?>s</td>
+      <td><?=q($h['note'])?></td>
+    </tr>
+    <?php endforeach; ?>
+  </table>
+  <?php endif; ?>
+</div>
+
+<div class="psc-card">
+  <b>How this works</b>
+  <div class="psc-note">While enabled, a background daemon repeatedly picks a random sector offset within your array's parity-covered range and runs Unraid's own parity check engine (<code>mdcmd check nocorrect &lt;offset&gt;</code>) for approximately the configured spot size, then pauses it (<code>mdcmd nocheck</code>) and picks a new random offset. This continues indefinitely until you disable it here or uninstall the plugin.</div>
+  <div class="psc-note"><b>Read-only, always:</b> spot checks always run in NOCORRECT mode. Mismatches are reported and logged, but parity is never rewritten by this plugin. If mismatches are found, investigate (SMART status, cables, memory) and run a normal correcting parity check from the Unraid Main page yourself when you're confident which side is wrong.</div>
+  <div class="psc-note"><b>It steps aside automatically</b> if the array isn't started, if the parity disk isn't reporting OK, or if a real parity check/rebuild is already running (started by you or by Unraid) &mdash; it never cancels or interferes with an operation it didn't start.</div>
+  <div class="psc-note"><b>Version note:</b> the random-offset behaviour relies on the optional starting-offset argument to <code>mdcmd check</code>. On very old Unraid versions that may not be honoured, in which case spot checks will effectively always start from the beginning of the array; check the system log (search for "parity-spotcheck") to confirm offsets are actually moving.</div>
+  <div class="psc-note">Spot-check activity is also written to the system log (<code>logger -t parity-spotcheck</code>) so it survives even if the on-page counters reset after a reboot. A Warning notification is sent through your configured Unraid notification agents immediately if a spot check finds a mismatch.</div>
+</div>
+
+<div class="psc-copyright">Copyright &copy; Raymond Munro 2026. All rights reserved.</div>
+]]></INLINE>
+</FILE>
+<FILE Name="/usr/local/emhttp/plugins/parity-spotcheck/scripts/parity-spotcheck.sh">
+<INLINE><![CDATA[
+#!/bin/bash
+set -u
+export PATH="/usr/local/sbin:/usr/sbin:/sbin:/usr/local/bin:/usr/bin:/bin:$PATH"
+
+NAME="parity-spotcheck"
+CFGDIR="/boot/config/plugins/${NAME}"
+CFG="${CFGDIR}/${NAME}.cfg"
+STATE_DIR="/var/local/${NAME}"
+STATE_FILE="${STATE_DIR}/state"
+HISTORY_FILE="${STATE_DIR}/history"
+PID_FILE="/var/run/${NAME}.pid"
+VARINI="/var/local/emhttp/var.ini"
+DISKSINI="/var/local/emhttp/disks.ini"
+NOTIFY="/usr/local/emhttp/webGui/scripts/notify"
+POLL_SECONDS=2
+HISTORY_MAX_LINES=200
+
+mkdir -p "$STATE_DIR" "$CFGDIR"
+log() { logger -t "$NAME" -- "$*"; }
+
+load_cfg() {
+  ENABLED="no"; SPOT_SIZE_MB="1024"; INTERVAL_SECONDS="300"
+  [[ -f "$CFG" ]] && source "$CFG"
+  [[ "$SPOT_SIZE_MB" =~ ^[0-9]+$ ]] || SPOT_SIZE_MB="1024"
+  [[ "$INTERVAL_SECONDS" =~ ^[0-9]+$ ]] || INTERVAL_SECONDS="300"
+  (( SPOT_SIZE_MB < 16 )) && SPOT_SIZE_MB=16
+  (( INTERVAL_SECONDS < 10 )) && INTERVAL_SECONDS=10
+}
+
+write_state() {
+  local status="$1" detail="$2" now
+  now="$(date '+%Y-%m-%d %H:%M:%S')"
+  umask 022
+  {
+    printf 'STATUS="%s"\n' "$status"
+    printf 'DETAIL="%s"\n' "$detail"
+    printf 'UPDATED="%s"\n' "$now"
+    printf 'TOTAL_SPOTS="%s"\n' "${TOTAL_SPOTS:-0}"
+    printf 'TOTAL_MB="%s"\n' "${TOTAL_MB:-0}"
+    printf 'TOTAL_ERRORS="%s"\n' "${TOTAL_ERRORS:-0}"
+    printf 'LAST_OFFSET_DESC="%s"\n' "${LAST_OFFSET_DESC:-}"
+  } > "${STATE_FILE}.tmp"
+  mv -f "${STATE_FILE}.tmp" "$STATE_FILE"
+}
+
+append_history() {
+  umask 022
+  printf '%s|%s|%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" "$5" "$6" >> "$HISTORY_FILE"
+  tail -n "$HISTORY_MAX_LINES" "$HISTORY_FILE" > "${HISTORY_FILE}.tmp" 2>/dev/null && mv -f "${HISTORY_FILE}.tmp" "$HISTORY_FILE"
+}
+
+var_ini_get() {
+  [[ -f "$VARINI" ]] || return 0
+  awk -F'"' -v k="$1" '$0 ~ "^"k"=" {print $2; exit}' "$VARINI"
+}
+
+disks_ini_get() {
+  [[ -f "$DISKSINI" ]] || return 0
+  awk -F'"' -v sec="[$1]" -v k="$2" '
+    $0 == sec { infield=1; next }
+    /^\[/ { infield=0 }
+    infield && $0 ~ "^"k"=" { print $2; exit }
+  ' "$DISKSINI"
+}
+
+send_warning() {
+  local subject="$1" description="$2"
+  [[ -x "$NOTIFY" ]] || { log "Notification script not found: $NOTIFY"; return 1; }
+  "$NOTIFY" -e "Unraid Parity Spot Check" -s "$subject" -d "$description" -i "warning" >/dev/null 2>&1
+}
+
+# Uniform random integer in [0, max], read fresh from /dev/urandom each call.
+# (Deliberately not $RANDOM: inside a command-substitution subshell, some bash
+# builds reseed it identically on every call, which silently makes "random"
+# offsets constant. od/dev-urandom has no such gotcha and is always present on Linux.)
+random_units_upto() {
+  local max="$1"
+  (( max <= 0 )) && { echo 0; return; }
+  local hi lo combined
+  hi="$(od -An -N4 -tu4 /dev/urandom 2>/dev/null | tr -d ' \n')"
+  lo="$(od -An -N4 -tu4 /dev/urandom 2>/dev/null | tr -d ' \n')"
+  [[ "$hi" =~ ^[0-9]+$ ]] || hi=0
+  [[ "$lo" =~ ^[0-9]+$ ]] || lo=0
+  hi=$(( hi & 0x7FFFFFF ))
+  combined=$(( (hi << 32) | lo ))
+  (( combined < 0 )) && combined=$(( -combined ))
+  echo $(( combined % (max + 1) ))
+}
+
+pick_offset_sectors() {
+  local total_sectors="$1" spot_sectors="$2"
+  local max_start=$(( total_sectors - spot_sectors ))
+  (( max_start < 0 )) && max_start=0
+  local max_units=$(( max_start / 8 ))
+  local units
+  units="$(random_units_upto "$max_units")"
+  echo $(( units * 8 ))
+}
+
+cleanup() { rm -f "$PID_FILE"; }
+on_term() {
+  mdcmd nocheck >/dev/null 2>&1 || true
+  write_state "STOPPED" "Stopped by request"
+  log "Stopping; paused any in-flight spot check"
+  exit 0
+}
+trap cleanup EXIT
+trap on_term INT TERM
+
+printf '%s\n' "$$" > "$PID_FILE"
+TOTAL_SPOTS=0; TOTAL_MB=0; TOTAL_ERRORS=0; LAST_OFFSET_DESC=""
+
+load_cfg
+[[ "$ENABLED" == "yes" ]] || write_state "IDLE" "Spot checking is disabled"
+
+while true; do
+  load_cfg
+  if [[ "$ENABLED" != "yes" ]]; then
+    write_state "IDLE" "Spot checking is disabled"
+    sleep 5
+    continue
+  fi
+
+  mdstate="$(var_ini_get mdState)"
+  if [[ "$mdstate" != "STARTED" ]]; then
+    write_state "WAITING" "Array is not started (state=${mdstate:-unknown}); will retry"
+    sleep "$INTERVAL_SECONDS"
+    continue
+  fi
+
+  parity_status="$(disks_ini_get parity status)"
+  if [[ "$parity_status" != "DISK_OK" ]]; then
+    write_state "WAITING" "Parity disk is not reporting OK (status=${parity_status:-none}); nothing valid to spot-check"
+    sleep "$INTERVAL_SECONDS"
+    continue
+  fi
+
+  mdresync="$(var_ini_get mdResync)"
+  if [[ -n "$mdresync" && "$mdresync" != "0" ]]; then
+    action="$(var_ini_get mdResyncAction)"
+    write_state "WAITING" "Another array check/rebuild is already running (${action:-unknown}); waiting for it to finish"
+    sleep "$POLL_SECONDS"
+    continue
+  fi
+
+  parity_size_kb="$(disks_ini_get parity size)"
+  [[ "$parity_size_kb" =~ ^[0-9]+$ ]] || parity_size_kb="$(var_ini_get mdResyncSize)"
+  if [[ ! "$parity_size_kb" =~ ^[0-9]+$ ]] || (( parity_size_kb == 0 )); then
+    write_state "ERROR" "Could not determine parity size from $DISKSINI or $VARINI"
+    log "ERROR: could not determine parity size"
+    sleep "$INTERVAL_SECONDS"
+    continue
+  fi
+
+  total_sectors=$(( parity_size_kb * 2 ))
+  spot_sectors=$(( SPOT_SIZE_MB * 2048 ))
+  (( spot_sectors > total_sectors )) && spot_sectors=$(( (total_sectors / 8) * 8 ))
+
+  offset_sectors="$(pick_offset_sectors "$total_sectors" "$spot_sectors")"
+  offset_mb=$(( offset_sectors / 2048 ))
+  LAST_OFFSET_DESC="sector ${offset_sectors} (~${offset_mb} MB into the array)"
+
+  errs_before="$(var_ini_get sbSyncErrs)"; [[ "$errs_before" =~ ^[0-9]+$ ]] || errs_before=0
+  start_epoch="$(date +%s)"
+  start_text="$(date '+%Y-%m-%d %H:%M:%S')"
+
+  mdcmd check nocorrect "$offset_sectors" >/dev/null 2>&1
+  log "Started spot check at sector $offset_sectors (~${offset_mb} MB), target size ${SPOT_SIZE_MB} MB"
+  write_state "RUNNING" "Spot-checking parity starting at $LAST_OFFSET_DESC"
+
+  sleep 1
+  pos0="$(var_ini_get mdResyncPos)"; [[ "$pos0" =~ ^[0-9]+$ ]] || pos0=0
+  target_delta_kb=$(( SPOT_SIZE_MB * 1024 ))
+  note="completed"
+
+  while true; do
+    sleep "$POLL_SECONDS"
+    mdresync_now="$(var_ini_get mdResync)"
+    if [[ -z "$mdresync_now" || "$mdresync_now" == "0" ]]; then
+      note="check ended on its own (reached end of array or was stopped elsewhere)"
+      break
+    fi
+    pos_now="$(var_ini_get mdResyncPos)"; [[ "$pos_now" =~ ^[0-9]+$ ]] || pos_now=$pos0
+    delta=$(( pos_now - pos0 ))
+    if (( delta >= target_delta_kb )); then
+      break
+    fi
+    load_cfg
+    if [[ "$ENABLED" != "yes" ]]; then
+      note="stopped: disabled while running"
+      break
+    fi
+  done
+
+  mdresync_now="$(var_ini_get mdResync)"
+  if [[ -n "$mdresync_now" && "$mdresync_now" != "0" ]]; then
+    mdcmd nocheck >/dev/null 2>&1
+  fi
+
+  errs_after="$(var_ini_get sbSyncErrs)"; [[ "$errs_after" =~ ^[0-9]+$ ]] || errs_after=$errs_before
+  errs_delta=$(( errs_after - errs_before ))
+  (( errs_delta < 0 )) && errs_delta=0
+  end_epoch="$(date +%s)"
+  duration=$(( end_epoch - start_epoch ))
+
+  TOTAL_SPOTS=$(( TOTAL_SPOTS + 1 ))
+  TOTAL_MB=$(( TOTAL_MB + SPOT_SIZE_MB ))
+  TOTAL_ERRORS=$(( TOTAL_ERRORS + errs_delta ))
+
+  append_history "$start_text" "sector $offset_sectors (~${offset_mb} MB)" "$SPOT_SIZE_MB" "$errs_delta" "$duration" "$note"
+  log "Spot check finished: offset=${offset_sectors} size=${SPOT_SIZE_MB}MB errors=${errs_delta} duration=${duration}s note=${note}"
+
+  if (( errs_delta > 0 )); then
+    send_warning "Parity mismatch found" "A parity spot check starting at sector ${offset_sectors} (~${offset_mb} MB into the array) found ${errs_delta} mismatch(es). No corrections were made (NOCORRECT mode). Investigate before running a correcting parity check."
+    write_state "RUNNING" "Last spot found ${errs_delta} mismatch(es) at $LAST_OFFSET_DESC — see history below"
+  else
+    write_state "RUNNING" "Last spot clean at $LAST_OFFSET_DESC; resting ${INTERVAL_SECONDS}s before the next one"
+  fi
+
+  load_cfg
+  [[ "$ENABLED" == "yes" ]] && sleep "$INTERVAL_SECONDS"
+done
+]]></INLINE>
+</FILE>
+<FILE Name="/usr/local/emhttp/plugins/parity-spotcheck/scripts/rc.parity-spotcheck">
+<INLINE><![CDATA[
+#!/bin/bash
+export PATH="/usr/local/sbin:/usr/sbin:/sbin:/usr/local/bin:/usr/bin:/bin:$PATH"
+NAME="parity-spotcheck"
+SCRIPT="/usr/local/emhttp/plugins/${NAME}/scripts/${NAME}.sh"
+PID_FILE="/var/run/${NAME}.pid"
+STATE_DIR="/var/local/${NAME}"
+
+is_running() {
+  [[ -f "$PID_FILE" ]] || return 1
+  local pid
+  pid="$(cat "$PID_FILE" 2>/dev/null)"
+  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+start() {
+  if is_running; then
+    echo "$NAME is already running"
+    return 0
+  fi
+  mkdir -p "$STATE_DIR"
+  nohup "$SCRIPT" >/dev/null 2>&1 &
+  sleep 0.2
+  echo "$NAME started"
+}
+
+stop() {
+  if is_running; then
+    local pid
+    pid="$(cat "$PID_FILE")"
+    kill "$pid" 2>/dev/null || true
+    for _ in 1 2 3 4 5; do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.2
+    done
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+  # Always pause any in-flight spot check, even if the daemon didn't exit cleanly.
+  mdcmd nocheck >/dev/null 2>&1 || true
+  rm -f "$PID_FILE"
+  echo "$NAME stopped"
+}
+
+case "${1:-}" in
+  start) start ;;
+  stop) stop ;;
+  restart) stop; start ;;
+  status)
+    if is_running; then
+      echo "running (pid $(cat "$PID_FILE"))"
+      exit 0
+    else
+      echo "stopped"
+      exit 1
+    fi
+    ;;
+  *) echo "Usage: $0 {start|stop|restart|status}"; exit 2 ;;
+esac
+]]></INLINE>
+</FILE>
+<FILE Run="/bin/bash">
+<INLINE><![CDATA[
+set -e
+NAME="parity-spotcheck"
+PLGDIR="/usr/local/emhttp/plugins/$NAME"
+CFGDIR="/boot/config/plugins/$NAME"
+CFG="$CFGDIR/$NAME.cfg"
+mkdir -p "$PLGDIR/scripts" "$CFGDIR" "/var/local/$NAME"
+chmod 0755 "$PLGDIR/scripts/parity-spotcheck.sh" "$PLGDIR/scripts/rc.parity-spotcheck"
+chmod 0644 "$PLGDIR/ParitySpotCheck.page"
+if [[ ! -f "$CFG" ]]; then
+cat > "$CFG" <<'CFGEOF'
+ENABLED="no"
+SPOT_SIZE_MB="1024"
+INTERVAL_SECONDS="300"
+CFGEOF
+chmod 0644 "$CFG"
+fi
+"$PLGDIR/scripts/rc.$NAME" stop >/dev/null 2>&1 || true
+"$PLGDIR/scripts/rc.$NAME" start >/dev/null 2>&1 || true
+echo "-----------------------------------------------------------"
+echo " Parity Spot Check installed"
+echo " Version: 2026.09.10"
+echo " Mode: always NOCORRECT (read-only, never writes parity)"
+echo " Default: disabled; enable it under Settings -> User Utilities"
+echo " Settings: Settings -> User Utilities -> Parity Spot Check"
+echo "-----------------------------------------------------------"
+]]></INLINE>
+</FILE>
+<FILE Run="/bin/bash" Method="remove">
+<INLINE><![CDATA[
+NAME="parity-spotcheck"
+PLGDIR="/usr/local/emhttp/plugins/$NAME"
+if [[ -x "$PLGDIR/scripts/rc.$NAME" ]]; then "$PLGDIR/scripts/rc.$NAME" stop >/dev/null 2>&1 || true; fi
+mdcmd nocheck >/dev/null 2>&1 || true
+rm -rf "$PLGDIR" "/var/local/$NAME"
+rm -f "/var/run/$NAME.pid"
+echo "Parity Spot Check removed. Any in-flight spot check was paused. Saved settings under /boot/config/plugins/$NAME are preserved."
+]]></INLINE>
+</FILE>
+</PLUGIN>
