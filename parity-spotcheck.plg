@@ -254,9 +254,14 @@ var_ini_get() {
 
 disks_ini_get() {
   [[ -f "$DISKSINI" ]] || return 0
-  awk -F'"' -v sec="[$1]" -v k="$2" '
-    $0 == sec { infield=1; next }
-    /^\[/ { infield=0 }
+  # Section headers are written as ["name"] (quotes included), not [name].
+  awk -F'"' -v sec="$1" -v k="$2" '
+    /^\[/ {
+      line = $0
+      gsub(/^\["?/, "", line); gsub(/"?\]$/, "", line)
+      infield = (line == sec)
+      next
+    }
     infield && $0 ~ "^"k"=" { print $2; exit }
   ' "$DISKSINI"
 }
@@ -341,16 +346,24 @@ while true; do
     continue
   fi
 
-  parity_size_kb="$(disks_ini_get parity size)"
-  [[ "$parity_size_kb" =~ ^[0-9]+$ ]] || parity_size_kb="$(var_ini_get mdResyncSize)"
-  if [[ ! "$parity_size_kb" =~ ^[0-9]+$ ]] || (( parity_size_kb == 0 )); then
+  total_sectors="$(disks_ini_get parity sectors)"
+  if [[ ! "$total_sectors" =~ ^[0-9]+$ ]] || (( total_sectors == 0 )); then
+    # Fall back to size (KB) * 2, then to var.ini's resync size (KB) * 2.
+    parity_size_kb="$(disks_ini_get parity size)"
+    [[ "$parity_size_kb" =~ ^[0-9]+$ ]] || parity_size_kb="$(var_ini_get mdResyncSize)"
+    if [[ "$parity_size_kb" =~ ^[0-9]+$ ]] && (( parity_size_kb > 0 )); then
+      total_sectors=$(( parity_size_kb * 2 ))
+    else
+      total_sectors=0
+    fi
+  fi
+  if (( total_sectors == 0 )); then
     write_state "ERROR" "Could not determine parity size from $DISKSINI or $VARINI"
     log "ERROR: could not determine parity size"
     sleep "$INTERVAL_SECONDS"
     continue
   fi
 
-  total_sectors=$(( parity_size_kb * 2 ))
   spot_sectors=$(( SPOT_SIZE_MB * 2048 ))
   (( spot_sectors > total_sectors )) && spot_sectors=$(( (total_sectors / 8) * 8 ))
 
