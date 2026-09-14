@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name "parity-spotcheck">
 <!ENTITY author "Ray Munro">
-<!ENTITY version "2026.09.14">
+<!ENTITY version "2026.09.14a">
 <!ENTITY plgdir "/usr/local/emhttp/plugins/&name;">
 <!ENTITY cfgdir "/boot/config/plugins/&name;">
 <!ENTITY launch "Settings/ParitySpotCheck">
@@ -15,6 +15,9 @@
         project="https://github.com/&github;"
         readme="https://github.com/&github;#readme">
 <CHANGES>
+### 2026.09.14a
+- Fix the install-success message printing a hardcoded old version number instead of the version actually installed (the message lived inside a CDATA install script, so the &amp;version; entity was never expanded there).
+
 ### 2026.09.14
 - Add a plugin icon, shown on the Settings page and in Community Applications.
 
@@ -664,14 +667,18 @@ chmod 0644 "$CFG"
 fi
 "$PLGDIR/scripts/rc.$NAME" stop >/dev/null 2>&1 || true
 "$PLGDIR/scripts/rc.$NAME" start >/dev/null 2>&1 || true
+]]></INLINE>
+</FILE>
+<FILE Run="/bin/bash">
+<INLINE>
 echo "-----------------------------------------------------------"
 echo " Parity Spot Check installed"
-echo " Version: 2026.09.14"
+echo " Version: &version;"
 echo " Mode: always NOCORRECT (read-only, never writes parity)"
 echo " Default: disabled; enable it under Settings -> User Utilities"
 echo " Settings: Settings -> User Utilities -> Parity Spot Check"
 echo "-----------------------------------------------------------"
-]]></INLINE>
+</INLINE>
 </FILE>
 <FILE Run="/bin/bash" Method="remove">
 <INLINE><![CDATA[
