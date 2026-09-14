@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name "parity-spotcheck">
 <!ENTITY author "Ray Munro">
-<!ENTITY version "2026.09.10b">
+<!ENTITY version "2026.09.14">
 <!ENTITY plgdir "/usr/local/emhttp/plugins/&name;">
 <!ENTITY cfgdir "/boot/config/plugins/&name;">
 <!ENTITY launch "Settings/ParitySpotCheck">
@@ -15,6 +15,9 @@
         project="https://github.com/&github;"
         readme="https://github.com/&github;#readme">
 <CHANGES>
+### 2026.09.14
+- Add a plugin icon, shown on the Settings page and in Community Applications.
+
 ### 2026.09.10b
 - Settings page now polls a new status.php JSON endpoint every 3 seconds and updates status, counters and recent-history table in place, without a full page reload.
 
@@ -25,6 +28,39 @@
 ### 2026.09.10
 - Initial release.
 </CHANGES>
+<FILE Name="/usr/local/emhttp/plugins/parity-spotcheck/icon.svg">
+<INLINE><![CDATA[
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Parity Spot Check</title>
+  <desc id="desc">A disk drive with a crosshair scanning a random spot on it, representing continuous background parity spot checks.</desc>
+  <defs>
+    <linearGradient id="diskGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3aa0e0"/>
+      <stop offset="1" stop-color="#1f6fb0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- disk drive body -->
+  <rect x="88" y="176" width="336" height="200" rx="18" fill="url(#diskGrad)"/>
+  <rect x="88" y="176" width="336" height="200" rx="18" fill="none" stroke="#0b2a44" stroke-width="6"/>
+  <circle cx="150" cy="226" r="10" fill="#eaf6ff"/>
+  <rect x="182" y="218" width="150" height="16" rx="8" fill="#0b2a44" opacity="0.35"/>
+  <rect x="182" y="248" width="110" height="16" rx="8" fill="#0b2a44" opacity="0.25"/>
+
+  <!-- scanning sweep line -->
+  <rect x="88" y="300" width="336" height="10" fill="#eaf6ff" opacity="0.5"/>
+
+  <!-- crosshair spot-check badge -->
+  <circle cx="352" cy="316" r="70" fill="#0b2a44"/>
+  <circle cx="352" cy="316" r="52" fill="none" stroke="#f1892c" stroke-width="8"/>
+  <line x1="352" y1="250" x2="352" y2="278" stroke="#f1892c" stroke-width="8" stroke-linecap="round"/>
+  <line x1="352" y1="354" x2="352" y2="382" stroke="#f1892c" stroke-width="8" stroke-linecap="round"/>
+  <line x1="286" y1="316" x2="314" y2="316" stroke="#f1892c" stroke-width="8" stroke-linecap="round"/>
+  <line x1="390" y1="316" x2="418" y2="316" stroke="#f1892c" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="352" cy="316" r="10" fill="#f1892c"/>
+</svg>
+]]></INLINE>
+</FILE>
 <FILE Name="/usr/local/emhttp/plugins/parity-spotcheck/ParitySpotCheck.page">
 <INLINE><![CDATA[
 Menu="Utilities:91"
@@ -127,7 +163,15 @@ if (is_file($historyFile)) {
 .psc-table th,.psc-table td{text-align:left;padding:5px 10px;border-bottom:1px solid #eee}
 .psc-copyright{max-width:960px;margin:28px 0 10px;padding:14px 18px;border:2px solid #d65a00;border-radius:8px;text-align:center;font-size:18px;font-weight:700;letter-spacing:.2px}
 .psc-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600}
+.psc-header{display:flex;align-items:center;gap:14px;margin:0 0 18px}
+.psc-header img{width:52px;height:52px;flex:none}
+.psc-header p{margin:0;opacity:.75}
 </style>
+
+<div class="psc-header">
+  <img src="/plugins/parity-spotcheck/icon.svg" alt="">
+  <p>Continuously spot-checks array parity in the background, read-only.</p>
+</div>
 
 <?php if ($msg): ?><div class="notice"><?=q($msg)?></div><?php endif; ?>
 <?php if ($err): ?><div class="error"><?=q($err)?></div><?php endif; ?>
@@ -609,7 +653,7 @@ CFGDIR="/boot/config/plugins/$NAME"
 CFG="$CFGDIR/$NAME.cfg"
 mkdir -p "$PLGDIR/scripts" "$CFGDIR" "/var/local/$NAME"
 chmod 0755 "$PLGDIR/scripts/parity-spotcheck.sh" "$PLGDIR/scripts/rc.parity-spotcheck"
-chmod 0644 "$PLGDIR/ParitySpotCheck.page" "$PLGDIR/status.php"
+chmod 0644 "$PLGDIR/ParitySpotCheck.page" "$PLGDIR/status.php" "$PLGDIR/icon.svg"
 if [[ ! -f "$CFG" ]]; then
 cat > "$CFG" <<'CFGEOF'
 ENABLED="no"
@@ -622,7 +666,7 @@ fi
 "$PLGDIR/scripts/rc.$NAME" start >/dev/null 2>&1 || true
 echo "-----------------------------------------------------------"
 echo " Parity Spot Check installed"
-echo " Version: 2026.09.10b"
+echo " Version: 2026.09.14"
 echo " Mode: always NOCORRECT (read-only, never writes parity)"
 echo " Default: disabled; enable it under Settings -> User Utilities"
 echo " Settings: Settings -> User Utilities -> Parity Spot Check"

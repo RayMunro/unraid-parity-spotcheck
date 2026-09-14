@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="icon.svg" width="160" alt="Parity Spot Check icon" />
+</p>
+
 # Parity Spot Check for Unraid
 
 Continuously spot-checks your array's parity in the background: it picks a

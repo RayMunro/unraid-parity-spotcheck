@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Parity Spot Check</title>
+  <desc id="desc">A disk drive with a crosshair scanning a random spot on it, representing continuous background parity spot checks.</desc>
+  <defs>
+    <linearGradient id="diskGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3aa0e0"/>
+      <stop offset="1" stop-color="#1f6fb0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- disk drive body -->
+  <rect x="88" y="176" width="336" height="200" rx="18" fill="url(#diskGrad)"/>
+  <rect x="88" y="176" width="336" height="200" rx="18" fill="none" stroke="#0b2a44" stroke-width="6"/>
+  <circle cx="150" cy="226" r="10" fill="#eaf6ff"/>
+  <rect x="182" y="218" width="150" height="16" rx="8" fill="#0b2a44" opacity="0.35"/>
+  <rect x="182" y="248" width="110" height="16" rx="8" fill="#0b2a44" opacity="0.25"/>
+
+  <!-- scanning sweep line -->
+  <rect x="88" y="300" width="336" height="10" fill="#eaf6ff" opacity="0.5"/>
+
+  <!-- crosshair spot-check badge -->
+  <circle cx="352" cy="316" r="70" fill="#0b2a44"/>
+  <circle cx="352" cy="316" r="52" fill="none" stroke="#f1892c" stroke-width="8"/>
+  <line x1="352" y1="250" x2="352" y2="278" stroke="#f1892c" stroke-width="8" stroke-linecap="round"/>
+  <line x1="352" y1="354" x2="352" y2="382" stroke="#f1892c" stroke-width="8" stroke-linecap="round"/>
+  <line x1="286" y1="316" x2="314" y2="316" stroke="#f1892c" stroke-width="8" stroke-linecap="round"/>
+  <line x1="390" y1="316" x2="418" y2="316" stroke="#f1892c" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="352" cy="316" r="10" fill="#f1892c"/>
+</svg>
