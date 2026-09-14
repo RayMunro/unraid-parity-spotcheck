@@ -243,7 +243,7 @@ if (is_file($historyFile)) {
   <div class="psc-note">Spot-check activity is also written to the system log (<code>logger -t parity-spotcheck</code>) so it survives even if the on-page counters reset after a reboot. A Warning notification is sent through your configured Unraid notification agents immediately if a spot check finds a mismatch.</div>
 </div>
 
-<div class="psc-copyright">Copyright &copy; Raymond Munro 2026. All rights reserved.</div>
+<div class="psc-copyright">Copyright &copy; Ray Munro 2026. All rights reserved.</div>
 
 <script>
 (function() {
