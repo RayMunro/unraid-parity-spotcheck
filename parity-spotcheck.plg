@@ -359,6 +359,9 @@ CFG="${CFGDIR}/${NAME}.cfg"
 STATE_DIR="/var/local/${NAME}"
 STATE_FILE="${STATE_DIR}/state"
 HISTORY_FILE="${STATE_DIR}/history"
+# Present only while a check this daemon started is running. rc stop and the
+# remove script read it too, so a check nobody here started is never cancelled.
+OWN_MARKER="${STATE_DIR}/own_check"
 PID_FILE="/var/run/${NAME}.pid"
 VARINI="/var/local/emhttp/var.ini"
 DISKSINI="/var/local/emhttp/disks.ini"
@@ -455,7 +458,13 @@ pick_offset_sectors() {
 
 cleanup() { rm -f "$PID_FILE"; }
 on_term() {
-  mdcmd nocheck >/dev/null 2>&1 || true
+  if [[ -f "$OWN_MARKER" ]]; then
+    mdresync_now="$(var_ini_get mdResync)"
+    if [[ -n "$mdresync_now" && "$mdresync_now" != "0" ]]; then
+      mdcmd nocheck >/dev/null 2>&1 || true
+    fi
+    rm -f "$OWN_MARKER"
+  fi
   write_state "STOPPED" "Stopped by request"
   log "Stopping; paused any in-flight spot check"
   exit 0
@@ -528,6 +537,14 @@ while true; do
   start_epoch="$(date +%s)"
   start_text="$(date '+%Y-%m-%d %H:%M:%S')"
 
+  # Re-check immediately before starting: the reads above take a moment, and a
+  # check started in that gap is not ours to take over.
+  mdresync="$(var_ini_get mdResync)"
+  if [[ -n "$mdresync" && "$mdresync" != "0" ]]; then
+    sleep "$POLL_SECONDS"
+    continue
+  fi
+  printf '%s\n' "$offset_sectors" > "$OWN_MARKER"
   mdcmd check nocorrect "$offset_sectors" >/dev/null 2>&1
   log "Started spot check at sector $offset_sectors (~${offset_mb} MB), target size ${SPOT_SIZE_MB} MB"
   write_state "RUNNING" "Spot-checking parity starting at $LAST_OFFSET_DESC"
@@ -542,6 +559,7 @@ while true; do
     mdresync_now="$(var_ini_get mdResync)"
     if [[ -z "$mdresync_now" || "$mdresync_now" == "0" ]]; then
       note="check ended on its own (reached end of array or was stopped elsewhere)"
+      rm -f "$OWN_MARKER"
       break
     fi
     pos_now="$(var_ini_get mdResyncPos)"; [[ "$pos_now" =~ ^[0-9]+$ ]] || pos_now=$pos0
@@ -557,9 +575,10 @@ while true; do
   done
 
   mdresync_now="$(var_ini_get mdResync)"
-  if [[ -n "$mdresync_now" && "$mdresync_now" != "0" ]]; then
+  if [[ -f "$OWN_MARKER" && -n "$mdresync_now" && "$mdresync_now" != "0" ]]; then
     mdcmd nocheck >/dev/null 2>&1
   fi
+  rm -f "$OWN_MARKER"
 
   errs_after="$(var_ini_get sbSyncErrs)"; [[ "$errs_after" =~ ^[0-9]+$ ]] || errs_after=$errs_before
   errs_delta=$(( errs_after - errs_before ))
@@ -624,8 +643,13 @@ stop() {
     done
     kill -9 "$pid" 2>/dev/null || true
   fi
-  # Always pause any in-flight spot check, even if the daemon didn't exit cleanly.
-  mdcmd nocheck >/dev/null 2>&1 || true
+  # Stop an in-flight spot check only if the daemon started it and did not get to
+  # clean up (for example, it was killed with -9). A parity check or rebuild the
+  # user or the schedule started has no marker and is left running.
+  if [[ -f "$STATE_DIR/own_check" ]]; then
+    mdcmd nocheck >/dev/null 2>&1 || true
+    rm -f "$STATE_DIR/own_check"
+  fi
   rm -f "$PID_FILE"
   echo "$NAME stopped"
 }
@@ -685,10 +709,12 @@ echo "-----------------------------------------------------------"
 NAME="parity-spotcheck"
 PLGDIR="/usr/local/emhttp/plugins/$NAME"
 if [[ -x "$PLGDIR/scripts/rc.$NAME" ]]; then "$PLGDIR/scripts/rc.$NAME" stop >/dev/null 2>&1 || true; fi
-mdcmd nocheck >/dev/null 2>&1 || true
+if [[ -f "/var/local/$NAME/own_check" ]]; then
+  mdcmd nocheck >/dev/null 2>&1 || true
+fi
 rm -rf "$PLGDIR" "/var/local/$NAME"
 rm -f "/var/run/$NAME.pid"
-echo "Parity Spot Check removed. Any in-flight spot check was paused. Saved settings under /boot/config/plugins/$NAME are preserved."
+echo "Parity Spot Check removed. Any in-flight spot check it had started was stopped. Saved settings under /boot/config/plugins/$NAME are preserved."
 ]]></INLINE>
 </FILE>
 </PLUGIN>
